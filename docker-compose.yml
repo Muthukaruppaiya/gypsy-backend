@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gypsy-desk-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gypsy_desk
+    ports:
+      - "5432:5432"
+    volumes:
+      - gypsy_desk_pg:/var/lib/postgresql/data
+
+volumes:
+  gypsy_desk_pg:
