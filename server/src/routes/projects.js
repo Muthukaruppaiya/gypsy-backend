@@ -1,11 +1,11 @@
-import { Router } from 'express';
+import { asyncRouter } from '../router.js';
 import { query } from '../db.js';
 import { encrypt } from '../crypto.js';
-import { requireAuth } from '../middleware.js';
-import { buildOverview, hasHostedServer, toProject } from '../domain.js';
+import { isAdmin, requireAdmin, requireAuth } from '../middleware.js';
+import { buildOverview, forRole, hasHostedServer, toProject } from '../domain.js';
 import { validateProject } from '../validate.js';
 
-const router = Router();
+const router = asyncRouter();
 
 router.use(requireAuth);
 
@@ -72,6 +72,29 @@ router.get('/overview', async (req, res) => {
   const rows = await loadAll();
   const projects = rows.map((row) => toProject(row));
   const overview = buildOverview(projects);
+  const leadCounts = await query(
+    `SELECT
+       COUNT(*) FILTER (WHERE status = 'Open' AND follow_up_at <= NOW())::int AS due,
+       COUNT(*) FILTER (WHERE status = 'Open' AND follow_up_at > NOW())::int AS later,
+       COUNT(*) FILTER (WHERE status = 'Converted')::int AS converted,
+       COUNT(*) FILTER (WHERE status = 'Open' AND follow_up_at <= NOW() AND (called_by = $1 OR called_by IS NULL))::int AS mine_due
+     FROM leads`,
+    [req.user.id],
+  );
+  overview.calls = leadCounts.rows[0];
+  if (!isAdmin(req)) {
+    // Sales sees the pipeline and money owed, never servers or the digest.
+    return res.json({
+      role: 'sales',
+      counts: overview.counts,
+      money: overview.money,
+      unpaid: overview.unpaid.map((project) => forRole(project, 'sales')),
+      leads: overview.leads,
+      calls: overview.calls,
+      todayLabel: overview.todayLabel,
+    });
+  }
+  overview.role = 'admin';
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
@@ -96,7 +119,7 @@ router.get('/overview', async (req, res) => {
   res.json(overview);
 });
 
-router.get('/export.csv', async (req, res) => {
+router.get('/export.csv', requireAdmin, async (req, res) => {
   const rows = await loadAll();
   const header = [
     'S.no', 'Client', 'Lead By', 'Server name', 'Server OS', 'Project status',
@@ -133,7 +156,7 @@ router.get('/', async (req, res) => {
     lead: req.query.lead,
     q: req.query.q,
   });
-  res.json(rows.map((row) => toProject(row)));
+  res.json(rows.map((row) => forRole(toProject(row), req.user.role)));
 });
 
 router.get('/:id', async (req, res) => {
@@ -141,10 +164,10 @@ router.get('/:id', async (req, res) => {
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid project.' });
   const row = await findProject(id);
   if (!row) return res.status(404).json({ error: 'Project not found.' });
-  res.json(toProject(row));
+  res.json(forRole(toProject(row), req.user.role));
 });
 
-router.post('/:id/reveal', async (req, res) => {
+router.post('/:id/reveal', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid project.' });
   const { rows } = await query('SELECT * FROM projects WHERE id = $1', [id]);
@@ -157,6 +180,13 @@ router.post('/', async (req, res) => {
   const parsed = validateProject(req.body);
   if (parsed.error) return res.status(400).json({ error: parsed.error });
   const project = parsed.value;
+  if (!isAdmin(req)) {
+    // Sales can open a project but not set server details.
+    Object.assign(project, {
+      serverName: null, serverOs: null, ip: null, serverUsername: null,
+      serverPassword: undefined, serverDueDay: null, monthlyServerCost: null,
+    });
+  }
   const { rows } = await query(
     `INSERT INTO projects (
       client_name, lead_by, server_name, server_os, status, payment, balance,
@@ -183,7 +213,7 @@ router.post('/', async (req, res) => {
       req.user.id,
     ],
   );
-  res.status(201).json(toProject(await findProject(rows[0].id)));
+  res.status(201).json(forRole(toProject(await findProject(rows[0].id)), req.user.role));
 });
 
 router.put('/:id', async (req, res) => {
@@ -195,8 +225,19 @@ router.put('/:id', async (req, res) => {
   if (!existing.rows[0]) return res.status(404).json({ error: 'Project not found.' });
 
   const project = parsed.value;
-  let passwordValue = existing.rows[0].server_password;
-  if (project.clearPassword) passwordValue = null;
+  const current = existing.rows[0];
+  let passwordValue = current.server_password;
+  if (!isAdmin(req)) {
+    // Sales edits never touch server fields: keep what is stored.
+    Object.assign(project, {
+      serverName: current.server_name,
+      serverOs: current.server_os,
+      ip: current.ip,
+      serverUsername: current.server_username,
+      serverDueDay: current.server_due_day,
+      monthlyServerCost: current.monthly_server_cost,
+    });
+  } else if (project.clearPassword) passwordValue = null;
   else if (project.serverPassword) passwordValue = encrypt(project.serverPassword);
 
   const { rows } = await query(
@@ -236,10 +277,10 @@ router.put('/:id', async (req, res) => {
       id,
     ],
   );
-  res.json(toProject(await findProject(id)));
+  res.json(forRole(toProject(await findProject(id)), req.user.role));
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid project.' });
   const { rowCount } = await query('DELETE FROM projects WHERE id = $1', [id]);

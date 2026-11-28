@@ -1,11 +1,12 @@
-import { Router } from 'express';
+import { asyncRouter, isRealDate } from '../router.js';
 import { query } from '../db.js';
-import { requireAuth } from '../middleware.js';
+import { requireAdmin, requireAuth } from '../middleware.js';
 import { toProject } from '../domain.js';
 import { nextTxnNo } from '../txn.js';
 
-const router = Router();
+const router = asyncRouter();
 router.use(requireAuth);
+router.use(requireAdmin);
 
 function dateOnly(value) {
   if (!value) return null;
@@ -36,7 +37,7 @@ function readPayment(body) {
   const amount = Number(body.amount);
   if (!Number.isInteger(projectId)) return { error: 'Choose a project.' };
   if (!Number.isFinite(amount) || amount <= 0) return { error: 'Amount must be more than zero.' };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.paidOn || ''))) {
+  if (!isRealDate(body.paidOn)) {
     return { error: 'Choose the date the payment was received.' };
   }
   const note = String(body.note || '').trim();

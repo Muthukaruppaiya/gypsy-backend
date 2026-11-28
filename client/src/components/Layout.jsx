@@ -2,32 +2,17 @@ import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
-import { followUpLabel } from '../format';
+import { followUpLabel, phoneLinks } from '../format';
+import { BrandMark, Icon, useToast } from './ui';
+import QuickSearch from './QuickSearch';
 
-function Icon({ name }) {
-  const paths = {
-    desk: 'M4 5h16v11H4zM8 20h8M12 16v4',
-    projects: 'M6 4h8l4 4v12H6zM14 4v4h4M8 12h8M8 16h5',
-    leads: 'M8 3h8a2 2 0 0 1 2 2v2H6V5a2 2 0 0 1 2-2zM6 7h12v3a6 6 0 0 1-12 0zM9 19h6',
-    servers: 'M4 6h16v4H4zM4 14h16v4H4zM7 8h.01M7 16h.01',
-    timeline: 'M5 4v16M5 8h9M5 13h13M5 18h7',
-    payments: 'M5 4h14v16H5zM8 8h8M8 12h8M8 16h5',
-    auto: 'M12 3v3M12 18v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M3 12h3M18 12h3M4.9 19.1L7 17M17 7l2.1-2.1',
-    account: 'M12 12a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM5 20a7 7 0 0 1 14 0',
-  };
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d={paths[name]} />
-    </svg>
-  );
-}
-
-function CallBanner({ calls, onSnooze }) {
+function CallBanner({ calls, onSnooze, onLeads }) {
   const [permission, setPermission] = useState(
     typeof Notification === 'undefined' ? 'unsupported' : Notification.permission,
   );
   if (!calls.length) return null;
   const first = calls[0];
+  const links = phoneLinks(first.phone);
 
   async function allow() {
     if (typeof Notification === 'undefined') return;
@@ -36,17 +21,18 @@ function CallBanner({ calls, onSnooze }) {
   }
 
   return (
-    <section className="call-banner">
-      <div>
-        <p className="kicker on-dark">Call now</p>
+    <section className="call-banner" aria-label="Calls due">
+      <div className="call-text">
+        <p className="kicker on-dark">Call now{calls.length > 1 ? ` · ${calls.length} waiting` : ''}</p>
         <strong>{first.clientName}</strong>
-        <p>{first.note}</p>
-        <p className="call-when">{followUpLabel(first.followUpAt)}{first.callerName ? ` · ${first.callerName}` : ''}</p>
-        {calls.length > 1 && <p>{calls.length - 1} more call{calls.length === 2 ? '' : 's'} waiting</p>}
+        {first.note && <p className="call-note">{first.note}</p>}
+        <p className="call-when">{followUpLabel(first.followUpAt).split(' · ')[0]}{first.callerName ? ` · ${first.callerName}` : ''}</p>
       </div>
       <div className="call-actions">
-        <Link className="btn gold" to="/leads">Open leads</Link>
-        <button type="button" className="btn secondary" onClick={() => onSnooze(first.id)}>Remind in an hour</button>
+        {links && <a className="btn gold" href={links.tel}><Icon name="phone" /> Call</a>}
+        {links && <a className="btn secondary" href={links.wa} target="_blank" rel="noreferrer">WhatsApp</a>}
+        {!onLeads && <Link className={`btn ${links ? 'secondary' : 'gold'}`} to="/leads/due">Open</Link>}
+        <button type="button" className="btn secondary" onClick={() => onSnooze(first.id)}>+1 hour</button>
         {permission === 'default' && (
           <button type="button" className="btn secondary" onClick={allow}>Allow alerts</button>
         )}
@@ -56,16 +42,46 @@ function CallBanner({ calls, onSnooze }) {
 }
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
   const location = useLocation();
   const [attention, setAttention] = useState(0);
   const [serverOpen, setServerOpen] = useState(0);
   const [dueCalls, setDueCalls] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const notify = useToast();
+
+  useEffect(() => {
+    function onKey(event) {
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target.isContentEditable;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSearchOpen(true);
+      } else if (event.key === '/' && !typing) {
+        event.preventDefault();
+        setSearchOpen(true);
+      } else if (event.key === 'Escape') {
+        setAddOpen(false);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     setMenuOpen(false);
+    setAddOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    function onKey(event) {
+      if (event.key === 'Escape') setMenuOpen(false);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
 
   useEffect(() => {
     let ignore = false;
@@ -77,6 +93,7 @@ export default function Layout() {
     api('/api/projects/overview')
       .then((overview) => {
         if (ignore) return;
+        if (overview.role !== 'admin') return;
         const urgent = overview.renewals.filter((project) => project.daysUntilDue <= 7).length;
         setAttention(urgent + overview.unpaid.length);
         setServerOpen(overview.serverMonth?.openCount || 0);
@@ -108,9 +125,15 @@ export default function Layout() {
   }, [dueCalls]);
 
   async function snooze(id) {
-    await api(`/api/leads/${id}/snooze`, { method: 'POST', body: { minutes: 60 } });
-    const rows = await api('/api/leads/reminders');
-    setDueCalls(rows);
+    try {
+      await api(`/api/leads/${id}/snooze`, { method: 'POST', body: { minutes: 60 } });
+      const rows = await api('/api/leads/reminders');
+      setDueCalls(rows);
+      window.dispatchEvent(new Event('gypsy-leads'));
+      notify('We will remind you again in an hour.');
+    } catch (err) {
+      notify(err.message, { tone: 'error' });
+    }
   }
 
   const initial = (user?.name || 'G').slice(0, 1).toUpperCase();
@@ -118,13 +141,18 @@ export default function Layout() {
   return (
     <div className={`shell${menuOpen ? ' menu-open' : ''}`}>
       <aside className="sidebar">
-        <div className="brand">
-          <span className="mark">G</span>
+        <Link className="brand" to="/" aria-label="Gypsy Desk home">
+          <BrandMark size={42} />
           <div>
             <p className="brand-kicker">Gypsy Coder</p>
             <strong>Gypsy Desk</strong>
           </div>
-        </div>
+        </Link>
+        <button type="button" className="search-trigger" onClick={() => setSearchOpen(true)} aria-label="Search">
+          <Icon name="search" />
+          <span className="search-trigger-label">Search</span>
+          <kbd>Ctrl K</kbd>
+        </button>
         <button
           type="button"
           className="menu-btn"
@@ -137,26 +165,32 @@ export default function Layout() {
           <span />
         </button>
         <div className="side-panel">
+        <Link className="btn gold nav-cta" to="/leads/new"><Icon name="phone" /> Log a call</Link>
         <nav className="nav">
           <p className="nav-label">Work</p>
           <NavLink to="/" end><Icon name="desk" /> Desk</NavLink>
-          <NavLink to="/leads">
-            <Icon name="leads" /> Leads
+          <NavLink to="/leads/due" className={() => (location.pathname.startsWith('/leads') && location.pathname !== '/leads/new' ? 'active' : '')}>
+            <Icon name="leads" /> Follow-ups
             {dueCalls.length > 0 && <span className="badge">{dueCalls.length}</span>}
           </NavLink>
           <NavLink to="/projects"><Icon name="projects" /> Projects</NavLink>
-          <p className="nav-label">Money</p>
-          <NavLink to="/payments"><Icon name="payments" /> Payments</NavLink>
-          <NavLink to="/servers">
-            <Icon name="servers" /> Server log
-            {serverOpen > 0 && <span className="badge">{serverOpen}</span>}
-          </NavLink>
-          <NavLink to="/timeline"><Icon name="timeline" /> Timeline</NavLink>
-          <NavLink to="/automation">
-            <Icon name="auto" /> Automation
-            {attention > 0 && <span className="badge">{attention}</span>}
-          </NavLink>
+          {isAdmin && (
+            <>
+              <p className="nav-label">Money &amp; servers</p>
+              <NavLink to="/payments"><Icon name="payments" /> Payments</NavLink>
+              <NavLink to="/servers">
+                <Icon name="servers" /> Server log
+                {serverOpen > 0 && <span className="badge">{serverOpen}</span>}
+              </NavLink>
+              <NavLink to="/timeline"><Icon name="timeline" /> Timeline</NavLink>
+              <NavLink to="/automation">
+                <Icon name="auto" /> Automation
+                {attention > 0 && <span className="badge">{attention}</span>}
+              </NavLink>
+            </>
+          )}
           <p className="nav-label">Studio</p>
+          {isAdmin && <NavLink to="/team"><Icon name="team" /> Team</NavLink>}
           <NavLink to="/account"><Icon name="account" /> Account</NavLink>
         </nav>
         <div className="sidebar-foot">
@@ -164,7 +198,7 @@ export default function Layout() {
             <span className="avatar">{initial}</span>
             <div>
               <strong>{user?.name}</strong>
-              <p>{user?.email}</p>
+              <p><span className={`role-badge role-${user?.role}`}>{isAdmin ? 'Admin' : 'Sales'}</span></p>
             </div>
           </div>
           <button type="button" className="btn secondary light" onClick={logout}>Sign out</button>
@@ -175,9 +209,40 @@ export default function Layout() {
         <button type="button" className="menu-shade" aria-label="Close menu" onClick={() => setMenuOpen(false)} />
       )}
       <main className="main">
-        <CallBanner calls={dueCalls} onSnooze={snooze} />
+        {location.pathname !== '/' && (
+          <CallBanner calls={dueCalls} onSnooze={snooze} onLeads={location.pathname.startsWith('/leads/due')} />
+        )}
         <Outlet />
       </main>
+
+      <nav className="bottom-nav" aria-label="Main">
+        <NavLink to="/" end><Icon name="desk" /><span>Desk</span></NavLink>
+        <NavLink to="/leads/due" className={() => (location.pathname.startsWith('/leads') && location.pathname !== '/leads/new' ? 'active' : '')}>
+          <Icon name="leads" /><span>Follow-ups</span>
+          {dueCalls.length > 0 && <b className="dot-badge">{dueCalls.length}</b>}
+        </NavLink>
+        <button type="button" className="bottom-add" aria-label="Add" aria-expanded={addOpen} onClick={() => setAddOpen((value) => !value)}>
+          <Icon name={addOpen ? 'close' : 'plus'} />
+        </button>
+        <NavLink to="/projects"><Icon name="projects" /><span>Projects</span></NavLink>
+        <button type="button" className={menuOpen ? 'active' : ''} onClick={() => setMenuOpen((open) => !open)} aria-expanded={menuOpen}>
+          <Icon name="menu" /><span>More</span>
+        </button>
+      </nav>
+
+      {addOpen && (
+        <div className="sheet-back" onClick={() => setAddOpen(false)}>
+          <div className="sheet" role="dialog" aria-label="Add something" onClick={(event) => event.stopPropagation()}>
+            <p className="kicker">Add</p>
+            <Link className="sheet-item" to="/leads/new"><Icon name="phone" /><span><strong>Log a call</strong><small>Note what a client said and set a reminder</small></span></Link>
+            <Link className="sheet-item" to="/projects/new"><Icon name="projects" /><span><strong>New project</strong><small>Add a client to the book</small></span></Link>
+            {isAdmin && <Link className="sheet-item" to="/payments"><Icon name="money" /><span><strong>Log a payment</strong><small>Money received for software</small></span></Link>}
+            {isAdmin && <Link className="sheet-item" to="/servers"><Icon name="servers" /><span><strong>Log hosting</strong><small>This month's server collection</small></span></Link>}
+          </div>
+        </div>
+      )}
+
+      <QuickSearch open={searchOpen} onClose={() => setSearchOpen(false)} isAdmin={isAdmin} />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { inr } from '../format';
+import { ConfirmButton, Empty, Loading, PageHead, useToast, usePageTitle } from '../components/ui';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -24,6 +25,9 @@ export default function ServerLog() {
   const [error, setError] = useState('');
   const [editor, setEditor] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [onlyOpen, setOnlyOpen] = useState(false);
+  const notify = useToast();
+  usePageTitle('Server log');
 
   function load(nextYear = year) {
     return api(`/api/servers/collections?year=${nextYear}`)
@@ -49,20 +53,25 @@ export default function ServerLog() {
     return map;
   }, [data]);
 
-  const rows = data?.projects || [];
+  const allRows = data?.projects || [];
+  const thisMonthNo = now.getMonth() + 1;
+  const isThisYear = year === now.getFullYear();
+  const rows = onlyOpen && isThisYear
+    ? allRows.filter((project) => project.monthlyServerCost && !entries.has(`${project.id}-${thisMonthNo}`))
+    : allRows;
 
   const totals = useMemo(() => {
     let logged = 0;
     let expected = 0;
     for (const entry of data?.entries || []) logged += entry.amount;
-    for (const project of rows) {
+    for (const project of allRows) {
       if (project.monthlyServerCost) expected += project.monthlyServerCost * 12;
     }
     const currentMonth = year === now.getFullYear() ? now.getMonth() + 1 : null;
     let monthExpected = 0;
     let monthLogged = 0;
     if (currentMonth) {
-      for (const project of rows) {
+      for (const project of allRows) {
         if (project.monthlyServerCost) monthExpected += project.monthlyServerCost;
         const entry = entries.get(`${project.id}-${currentMonth}`);
         if (entry) monthLogged += entry.amount;
@@ -76,7 +85,7 @@ export default function ServerLog() {
       monthLogged,
       currentMonth,
     };
-  }, [data, rows, entries, year, now]);
+  }, [data, allRows, entries, year]);
 
   function openEditor(project, month) {
     const entry = entries.get(`${project.id}-${month}`);
@@ -112,6 +121,7 @@ export default function ServerLog() {
         const without = current.entries.filter((entry) => entry.id !== saved.id && !(entry.projectId === saved.projectId && entry.month === saved.month));
         return { ...current, entries: [...without, saved] };
       });
+      notify(`${inr(saved.amount)} logged for ${editor.project.clientName}, ${MONTH_NAMES[editor.month - 1]}${saved.txnNo ? ` · ${saved.txnNo}` : ''}.`);
       setEditor(null);
     } catch (err) {
       setError(err.message);
@@ -130,6 +140,7 @@ export default function ServerLog() {
         ...current,
         entries: current.entries.filter((entry) => entry.id !== editor.id),
       }));
+      notify(`${MONTH_NAMES[editor.month - 1]} entry removed for ${editor.project.clientName}.`);
       setEditor(null);
     } catch (err) {
       setError(err.message);
@@ -142,16 +153,16 @@ export default function ServerLog() {
 
   return (
     <div className="page wide">
-      <header className="page-head">
-        <div>
-          <h1>Server collection log</h1>
-        </div>
+      <PageHead
+        title="Server log"
+        summary={data ? `${allRows.length} hosted · ${inr(totals.logged)} logged in ${year}` : null}
+      >
         <div className="year-switch" aria-label="Year">
           <button type="button" onClick={() => setYear((value) => value - 1)} aria-label="Previous year">‹</button>
           <strong>{year}</strong>
           <button type="button" onClick={() => setYear((value) => value + 1)} aria-label="Next year">›</button>
         </div>
-      </header>
+      </PageHead>
 
       {error && !editor && <p className="banner">{error}</p>}
 
@@ -176,7 +187,24 @@ export default function ServerLog() {
         </article>
       </section>
 
-      {!data && !error && <p className="kicker">Opening the log…</p>}
+      {!data && !error && <Loading label="Opening the log…" />}
+
+      {data && (
+        <div className="ledger-tools">
+          <div className="legend" aria-label="Legend">
+            <span><i className="swatch got" /> Collected</span>
+            <span><i className="swatch short" /> Less than the rate</span>
+            <span><i className="swatch open" /> Not logged yet</span>
+            <span><i className="swatch now" /> This month</span>
+          </div>
+          {isThisYear && (
+            <label className="check">
+              <input type="checkbox" checked={onlyOpen} onChange={(event) => setOnlyOpen(event.target.checked)} />
+              Only clients not logged for {MONTH_NAMES[thisMonthNo - 1]}
+            </label>
+          )}
+        </div>
+      )}
 
       {data && (
         <div className="table-wrap card ledger-card">
@@ -191,7 +219,13 @@ export default function ServerLog() {
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={14} className="muted">—</td>
+                  <td colSpan={14}>
+                    <Empty>
+                      {onlyOpen
+                        ? `Everyone is logged for ${MONTH_NAMES[thisMonthNo - 1]}.`
+                        : 'No hosted projects yet. Add a server and a monthly rate on a project to track it here.'}
+                    </Empty>
+                  </td>
                 </tr>
               )}
               {rows.map((project) => (
@@ -219,6 +253,7 @@ export default function ServerLog() {
                           type="button"
                           className={`cell-btn ${kind}${isNow ? ' now' : ''}`}
                           onClick={() => openEditor(project, month)}
+                          aria-label={`${project.clientName}, ${MONTH_NAMES[index]} ${year}: ${entry ? inr(entry.amount) : kind === 'open' ? 'not logged' : 'empty'}`}
                           title={[entry?.txnNo, entry?.note].filter(Boolean).join(' · ') || `${project.clientName} · ${MONTH_NAMES[index]} ${year}`}
                         >
                           {entry ? compact(entry.amount) : '·'}
@@ -235,7 +270,15 @@ export default function ServerLog() {
 
       {editor && (
         <div className="drawer-back" onClick={() => setEditor(null)}>
-          <form className="drawer" onClick={(event) => event.stopPropagation()} onSubmit={saveEntry}>
+          <form
+            className="drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${editor.project.clientName}, ${MONTH_NAMES[editor.month - 1]} ${year}`}
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={saveEntry}
+          >
+            <button type="button" className="drawer-close" aria-label="Close" onClick={() => setEditor(null)}>×</button>
             <p className="kicker">{MONTH_NAMES[editor.month - 1]} {year}</p>
             <h2>{editor.project.clientName}</h2>
             <p className="muted">
@@ -252,6 +295,7 @@ export default function ServerLog() {
                 step="1"
                 value={editor.amount}
                 onChange={(event) => setEditor({ ...editor, amount: event.target.value })}
+                autoFocus
                 required
               />
               {editor.project.monthlyServerCost != null && (
@@ -285,9 +329,9 @@ export default function ServerLog() {
               <button className="btn secondary" type="button" onClick={() => setEditor(null)}>Close</button>
             </div>
             {editor.id && (
-              <button className="text-btn danger-text" type="button" onClick={removeEntry} disabled={busy}>
+              <ConfirmButton onConfirm={removeEntry} confirmLabel="Yes, remove it" disabled={busy}>
                 Remove this month’s entry
-              </button>
+              </ConfirmButton>
             )}
             <Link to={`/projects/${editor.project.id}`}>Edit the monthly rate on the project</Link>
           </form>

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { inr } from '../format';
+import { ConfirmButton, Empty, Loading, PageHead, useToast, usePageTitle } from '../components/ui';
 
 function todayISO() {
   const now = new Date();
@@ -30,6 +31,10 @@ export default function Payments() {
   const [busy, setBusy] = useState(false);
   const [receipts, setReceipts] = useState([]);
   const projectFilter = params.get('project') || '';
+  const formRef = useRef(null);
+  const amountRef = useRef(null);
+  const notify = useToast();
+  usePageTitle('Payments');
 
   function load() {
     api('/api/payments/receipts').then(setReceipts).catch(() => {});
@@ -45,6 +50,15 @@ export default function Payments() {
   }, [projectFilter]);
 
   const projects = data?.projects || [];
+  const selected = projects.find((project) => String(project.id) === String(form.projectId));
+  const editing = form.id ? (data?.payments || []).find((payment) => payment.id === form.id) : null;
+  // When editing, the old amount is already counted in "received", so add it back.
+  const openForForm = selected?.balance != null
+    ? selected.balance + (editing && String(editing.projectId) === String(form.projectId) ? editing.amount : 0)
+    : null;
+  const amountNumber = Number(form.amount);
+  const overpay = openForForm != null && form.amount !== '' && amountNumber > openForForm;
+  const filteredProject = projectFilter ? projects.find((project) => String(project.id) === projectFilter) : null;
   const payments = useMemo(() => {
     const rows = data?.payments || [];
     if (!projectFilter) return rows;
@@ -79,6 +93,8 @@ export default function Payments() {
       note: payment.note || '',
     });
     setError('');
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setTimeout(() => amountRef.current?.focus({ preventScroll: true }), 300);
   }
 
   async function save(event) {
@@ -92,9 +108,14 @@ export default function Payments() {
       note: form.note,
     };
     try {
-      if (form.id) await api(`/api/payments/${form.id}`, { method: 'PUT', body });
-      else await api('/api/payments', { method: 'POST', body });
-      setForm({ ...BLANK, projectId: form.projectId });
+      const result = form.id
+        ? await api(`/api/payments/${form.id}`, { method: 'PUT', body })
+        : await api('/api/payments', { method: 'POST', body });
+      const who = selected?.clientName || 'the project';
+      notify(form.id
+        ? `Payment updated for ${who}.`
+        : `${inr(body.amount)} logged for ${who}${result?.txnNo ? ` · ${result.txnNo}` : ''}.`);
+      setForm({ ...BLANK, paidOn: todayISO(), projectId: form.projectId });
       await load();
     } catch (err) {
       setError(err.message);
@@ -108,7 +129,8 @@ export default function Payments() {
     setError('');
     try {
       await api(`/api/payments/${payment.id}`, { method: 'DELETE' });
-      if (form.id === payment.id) setForm({ ...BLANK, projectId: form.projectId });
+      if (form.id === payment.id) setForm({ ...BLANK, paidOn: todayISO(), projectId: form.projectId });
+      notify(`Payment of ${inr(payment.amount)} removed.`);
       await load();
     } catch (err) {
       setError(err.message);
@@ -119,11 +141,13 @@ export default function Payments() {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <div>
-          <h1>Payments</h1>
-        </div>
-      </header>
+      <PageHead
+        crumbs={filteredProject ? [{ label: 'Payments', to: '/payments' }, { label: filteredProject.clientName }] : undefined}
+        title={filteredProject ? filteredProject.clientName : 'Payments'}
+        summary={data ? <>{inr(totals.collected)} collected · <span className={totals.open ? 'money-due' : ''}>{inr(totals.open)}</span> open</> : null}
+      >
+        {filteredProject && <Link className="btn secondary" to={`/projects/${filteredProject.id}`}>Open project</Link>}
+      </PageHead>
 
       {error && <p className="banner">{error}</p>}
 
@@ -141,12 +165,12 @@ export default function Payments() {
         <article className="stat">
           <p>Still open</p>
           <strong className={totals.open ? 'due-number' : ''}>{inr(totals.open)}</strong>
-          <span />
+          <span>{totals.budget ? `${Math.round((totals.collected / totals.budget) * 100)}% collected` : ''}</span>
         </article>
       </section>
 
       <section className="split pay-split">
-        <form className="card form-card" onSubmit={save}>
+        <form className={`card form-card${form.id ? ' editing' : ''}`} onSubmit={save} ref={formRef}>
           <h2>{form.id ? 'Edit payment' : 'Log a payment'}</h2>
           <label className="field">
             <span>Project</span>
@@ -160,11 +184,19 @@ export default function Payments() {
                 <option key={project.id} value={project.id}>{project.clientName}</option>
               ))}
             </select>
+            {selected && (
+              <small>
+                {selected.payment == null
+                  ? 'No budget set on this project yet.'
+                  : openForForm ? <>Still open: <strong className="money-due">{inr(openForForm)}</strong> of {inr(selected.payment)}</> : 'This budget is fully paid.'}
+              </small>
+            )}
           </label>
           <div className="grid-2">
             <label className="field">
               <span>Amount (₹)</span>
               <input
+                ref={amountRef}
                 type="number"
                 min="1"
                 step="1"
@@ -172,12 +204,19 @@ export default function Payments() {
                 onChange={(event) => setForm({ ...form, amount: event.target.value })}
                 required
               />
+              {openForForm > 0 && !form.amount && (
+                <button type="button" className="text-btn" onClick={() => setForm({ ...form, amount: String(openForForm) })}>
+                  Fill the full balance, {inr(openForForm)}
+                </button>
+              )}
+              {overpay && <small className="warn-text">That is {inr(amountNumber - openForForm)} more than the open balance.</small>}
             </label>
             <label className="field">
               <span>Received on</span>
               <input
                 type="date"
                 value={form.paidOn}
+                max={todayISO()}
                 onChange={(event) => setForm({ ...form, paidOn: event.target.value })}
                 required
               />
@@ -188,7 +227,7 @@ export default function Payments() {
             <input
               value={form.note}
               onChange={(event) => setForm({ ...form, note: event.target.value })}
-              placeholder=""
+              placeholder="e.g. Advance, UPI, second instalment"
             />
           </label>
           <div className="form-actions">
@@ -197,7 +236,7 @@ export default function Payments() {
               <button
                 className="btn secondary"
                 type="button"
-                onClick={() => setForm({ ...BLANK, projectId: form.projectId })}
+                onClick={() => setForm({ ...BLANK, paidOn: todayISO(), projectId: form.projectId })}
               >
                 Cancel edit
               </button>
@@ -243,8 +282,8 @@ export default function Payments() {
         <div className="card-head">
           <h2>Payment log</h2>
         </div>
-        {!data && <p className="muted">Loading payments…</p>}
-        {data && payments.length === 0 && <p className="muted">—</p>}
+        {!data && !error && <Loading label="Loading payments…" />}
+        {data && payments.length === 0 && <Empty>No payments logged{filteredProject ? ` for ${filteredProject.clientName}` : ''} yet. Use the form above to log the first one.</Empty>}
         {payments.length > 0 && (
           <div className="table-wrap">
             <table>
@@ -260,7 +299,7 @@ export default function Payments() {
               </thead>
               <tbody>
                 {payments.map((payment) => (
-                  <tr key={payment.id}>
+                  <tr key={payment.id} className={form.id === payment.id ? 'row-editing' : ''}>
                     <td>{payment.txnNo ? <span className="txn">{payment.txnNo}</span> : '—'}</td>
                     <td>{pretty(payment.paidOn)}</td>
                     <td><Link className="client-link" to={`/projects/${payment.projectId}`}>{payment.clientName}</Link></td>
@@ -268,7 +307,7 @@ export default function Payments() {
                     <td>{payment.note || '—'}</td>
                     <td className="row-actions">
                       <button type="button" className="text-btn" onClick={() => edit(payment)}>Edit</button>
-                      <button type="button" className="text-btn danger-text" onClick={() => remove(payment)}>Remove</button>
+                      <ConfirmButton onConfirm={() => remove(payment)} confirmLabel="Remove it" disabled={busy}>Remove</ConfirmButton>
                     </td>
                   </tr>
                 ))}
@@ -282,7 +321,7 @@ export default function Payments() {
         <div className="card-head">
           <h2>All receipts</h2>
         </div>
-        {receipts.length === 0 && <p className="muted">—</p>}
+        {receipts.length === 0 && <Empty>Receipts appear here as you log software and server payments.</Empty>}
         {receipts.length > 0 && (
           <div className="table-wrap">
             <table>

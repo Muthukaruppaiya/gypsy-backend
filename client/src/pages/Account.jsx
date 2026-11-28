@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { PageHead, useToast, usePageTitle } from '../components/ui';
 
 export default function Account() {
   const { user, setUser } = useAuth();
@@ -10,6 +11,9 @@ export default function Account() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const notify = useToast();
+  usePageTitle('Account');
 
   useEffect(() => {
     setName(user?.name || '');
@@ -23,7 +27,7 @@ export default function Account() {
     try {
       const updated = await api('/api/auth/me', { method: 'PATCH', body: { name } });
       setUser(updated);
-      setMessage('Name updated.');
+      notify('Name updated.');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -33,9 +37,17 @@ export default function Account() {
 
   async function savePassword(event) {
     event.preventDefault();
-    setBusy(true);
     setError('');
     setMessage('');
+    if (newPassword !== confirmPassword) {
+      setError('The new passwords do not match.');
+      return;
+    }
+    if (newPassword === currentPassword) {
+      setError('Choose a password different from the current one.');
+      return;
+    }
+    setBusy(true);
     try {
       await api('/api/auth/password', {
         method: 'POST',
@@ -43,7 +55,8 @@ export default function Account() {
       });
       setCurrentPassword('');
       setNewPassword('');
-      setMessage('Password updated.');
+      setConfirmPassword('');
+      notify('Password updated.');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -53,12 +66,10 @@ export default function Account() {
 
   return (
     <div className="page narrow">
-      <header className="page-head">
-        <div>
-          <p className="kicker">Studio login</p>
-          <h1>Account</h1>
-        </div>
-      </header>
+      <PageHead
+        title="Account"
+        summary={<>{user?.email} <span className={`role-badge role-${user?.role}`}>{user?.role === 'admin' ? 'Admin' : 'Sales'}</span></>}
+      />
       {message && <p className="banner ok">{message}</p>}
       {error && <p className="banner">{error}</p>}
 
@@ -72,7 +83,7 @@ export default function Account() {
           <span>Email</span>
           <input value={user?.email || ''} disabled />
         </label>
-        <button className="btn" disabled={busy} type="submit">Save name</button>
+        <button className="btn fit" disabled={busy || name.trim() === (user?.name || '')} type="submit">Save name</button>
       </form>
 
       <form className="card form-card" onSubmit={savePassword}>
@@ -84,8 +95,14 @@ export default function Account() {
         <label className="field">
           <span>New password</span>
           <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" minLength={8} required />
+          <small>At least 8 characters.</small>
         </label>
-        <button className="btn" disabled={busy} type="submit">Update password</button>
+        <label className="field">
+          <span>Confirm new password</span>
+          <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={8} required />
+          {confirmPassword && confirmPassword !== newPassword && <small className="warn-text">Does not match yet.</small>}
+        </label>
+        <button className="btn fit" disabled={busy} type="submit">Update password</button>
       </form>
     </div>
   );

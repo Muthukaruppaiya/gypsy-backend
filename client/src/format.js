@@ -56,7 +56,34 @@ export function followUpLabel(iso) {
   if (absMin < 60) return diff < 0 ? `${absMin} min overdue · ${clock}` : `In ${absMin} min · ${clock}`;
   const hours = Math.round(absMin / 60);
   if (hours < 36) return diff < 0 ? `${hours} hr overdue · ${clock}` : `In ${hours} hr · ${clock}`;
-  return clock;
+  const days = Math.round(hours / 24);
+  return diff < 0 ? `${days} days overdue · ${clock}` : `In ${days} days · ${clock}`;
+}
+
+// Links for a phone number: tap to call, and WhatsApp (10-digit Indian numbers get +91).
+export function phoneLinks(phone) {
+  const digits = String(phone || '').replace(/[^\d+]/g, '');
+  if (digits.replace('+', '').length < 6) return null;
+  let wa = digits.replace(/^\+/, '');
+  if (/^0\d{10}$/.test(wa)) wa = wa.slice(1);
+  if (/^\d{10}$/.test(wa)) wa = `91${wa}`;
+  return { tel: `tel:${digits}`, wa: `https://wa.me/${wa}` };
+}
+
+// "just now", "5 min ago", "3 hr ago", "2 days ago", or a date.
+export function ago(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  const diff = Date.now() - date.getTime();
+  if (Number.isNaN(diff)) return '';
+  const min = Math.round(diff / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr} hr ago`;
+  const days = Math.round(hr / 24);
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+  return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 }
 
 export function todayLabel() {

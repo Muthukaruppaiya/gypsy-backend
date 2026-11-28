@@ -1,11 +1,12 @@
-import { Router } from 'express';
+import { asyncRouter, isRealDate } from '../router.js';
 import { query } from '../db.js';
-import { requireAuth } from '../middleware.js';
+import { requireAdmin, requireAuth } from '../middleware.js';
 import { hasHostedServer, toProject } from '../domain.js';
 import { nextTxnNo } from '../txn.js';
 
-const router = Router();
+const router = asyncRouter();
 router.use(requireAuth);
+router.use(requireAdmin);
 
 function dateOnly(value) {
   if (!value) return null;
@@ -43,7 +44,7 @@ function readEntry(body) {
 
   let collectedOn = null;
   if (body.collectedOn) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.collectedOn))) {
+    if (!isRealDate(body.collectedOn)) {
       return { error: 'Collected date must be a real date.' };
     }
     collectedOn = String(body.collectedOn);

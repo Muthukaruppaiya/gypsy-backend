@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { dueLabel, dueTone, inr } from '../format';
+import { Empty, Loading, PageHead, usePageTitle } from '../components/ui';
 
 export default function Timeline() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  usePageTitle('Timeline');
 
   useEffect(() => {
     api('/api/servers/timeline').then(setData).catch((err) => setError(err.message));
@@ -13,18 +15,20 @@ export default function Timeline() {
 
   return (
     <div className="page">
-      <header className="page-head">
-        <div>
-          <h1>Timeline</h1>
-        </div>
-      </header>
+      <PageHead
+        title="Timeline"
+        summary={data ? `${data.scheduled.length} renewal${data.scheduled.length === 1 ? '' : 's'} scheduled${data.unscheduled.length ? ` · ${data.unscheduled.length} without a day` : ''}` : null}
+      />
 
       {error && <p className="banner">{error}</p>}
-      {!data && !error && <p className="kicker">Drawing the line…</p>}
+      {!data && !error && <Loading label="Drawing the line…" />}
 
       {data && (
         <>
           <div className="time-now">Today · {data.today}</div>
+          {data.scheduled.length === 0 && (
+            <Empty>No renewal days yet. Set a server due day on a project to see it here.</Empty>
+          )}
           <div className="timeline">
             {data.scheduled.map((project) => (
               <article key={project.id} className="time-item">
@@ -37,7 +41,7 @@ export default function Timeline() {
                 <span className={`time-dot tone-dot-${dueTone(project.daysUntilDue)}`} />
                 <div className="time-card">
                   <h2><Link to={`/projects/${project.id}`}>{project.clientName}</Link></h2>
-                  <p>{project.serverName}{project.url ? ` · ${project.url}` : ''}</p>
+                  <p>{project.serverName || 'Server not named'}{project.url ? ` · ${project.url}` : ''}</p>
                   {project.monthlyServerCost != null && (
                     <p className="muted">Monthly hosting {inr(project.monthlyServerCost)}</p>
                   )}
@@ -55,7 +59,10 @@ export default function Timeline() {
                 {data.unscheduled.map((project) => (
                   <li key={project.id}>
                     <Link to={`/projects/${project.id}`}>{project.clientName}</Link>
-                    <span className="muted">{project.serverName}</span>
+                    <span className="list-end">
+                      <span className="muted">{project.serverName}</span>
+                      <Link className="mini-action" to={`/projects/${project.id}`}>Set due day</Link>
+                    </span>
                   </li>
                 ))}
               </ul>

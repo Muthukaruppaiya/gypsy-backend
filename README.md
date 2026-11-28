@@ -46,6 +46,22 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/gypsy_desk
 
 Restart `npm run dev`. The API uses that server instead of the embedded database. The same tables and seed run there when the database is empty.
 
+## Roles
+
+There are two roles. Admins add people and set roles under **Team**.
+
+| | Admin | Sales |
+| --- | --- | --- |
+| Desk | Money, servers, renewals, calls | Pipeline, calls, open balances |
+| Follow-ups and Log a call | Yes | Yes |
+| Projects | All fields | Client, lead, status, budget, URL, notes. No server, IP, login, password, due day, or hosting cost |
+| Delete project, export sheet, reveal password | Yes | No |
+| Payments, Server log, Timeline, Automation, Team | Yes | No |
+
+The API enforces this too, so a sales login never receives server details.
+
+Open sign-up only works while the desk has no users. After that, an admin adds each person from Team. When this version first runs, the earliest account becomes admin and everyone else becomes sales.
+
 ## What you can do
 
 - Sign in, create another studio login, and change your password

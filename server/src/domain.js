@@ -41,6 +41,19 @@ export function toProject(row, includePassword = false) {
   return project;
 }
 
+const SERVER_FIELDS = [
+  'serverName', 'serverOs', 'ip', 'serverUsername', 'hasPassword', 'serverPassword',
+  'serverDueDay', 'nextDueDate', 'daysUntilDue', 'monthlyServerCost',
+];
+
+// What a sales login may see of a project: no server, login, or hosting details.
+export function forRole(project, role) {
+  if (role === 'admin' || !project) return project;
+  const copy = { ...project };
+  for (const key of SERVER_FIELDS) delete copy[key];
+  return copy;
+}
+
 export function hasHostedServer(project) {
   if (!project || project.status === 'Under Discussion') return false;
   const name = String(project.serverName || '').trim();

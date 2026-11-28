@@ -6,7 +6,7 @@ export async function seed() {
   if (Number(users.rows[0].count) === 0) {
     const passwordHash = await bcrypt.hash('Desk@2026', 10);
     await query(
-      'INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3)',
+      "INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, 'admin')",
       ['Muthu', 'muthu@gypsycoder.local', passwordHash],
     );
   }

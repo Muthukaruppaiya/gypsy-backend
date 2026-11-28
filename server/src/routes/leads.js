@@ -1,9 +1,9 @@
-import { Router } from 'express';
+import { asyncRouter } from '../router.js';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware.js';
-import { toProject } from '../domain.js';
+import { forRole, toProject } from '../domain.js';
 
-const router = Router();
+const router = asyncRouter();
 router.use(requireAuth);
 
 const LEAD_FROM = `
@@ -89,8 +89,8 @@ async function loadLead(id) {
 }
 
 async function users() {
-  const { rows } = await query('SELECT id, name, email FROM users ORDER BY name, id');
-  return rows.map((row) => ({ id: Number(row.id), name: row.name, email: row.email }));
+  const { rows } = await query('SELECT id, name, role FROM users ORDER BY name, id');
+  return rows.map((row) => ({ id: Number(row.id), name: row.name, role: row.role }));
 }
 
 router.get('/reminders', async (req, res) => {
@@ -186,7 +186,7 @@ router.post('/:id/convert', async (req, res) => {
   if (existing.status === 'Converted' && existing.project_id) {
     const project = await query('SELECT * FROM projects WHERE id = $1', [existing.project_id]);
     if (project.rows[0]) {
-      return res.json({ lead: toLead(existing), project: toProject(project.rows[0]) });
+      return res.json({ lead: toLead(existing), project: forRole(toProject(project.rows[0]), req.user.role) });
     }
   }
   if (existing.status === 'Closed') {
@@ -224,7 +224,7 @@ router.post('/:id/convert', async (req, res) => {
   }
 
   const project = await query('SELECT * FROM projects WHERE id = $1', [projectId]);
-  res.status(201).json({ lead: toLead(await loadLead(id)), project: toProject(project.rows[0]) });
+  res.status(201).json({ lead: toLead(await loadLead(id)), project: forRole(toProject(project.rows[0]), req.user.role) });
 });
 
 router.delete('/:id', async (req, res) => {

@@ -76,6 +76,11 @@ const statements = [
   )`,
   `CREATE INDEX IF NOT EXISTS leads_follow_idx ON leads (status, follow_up_at)`,
   `CREATE INDEX IF NOT EXISTS leads_called_by_idx ON leads (called_by)`,
+  // Roles: existing callers become sales; the first account is made admin if no admin exists.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'sales'`,
+  `UPDATE users SET role = 'admin'
+   WHERE id = (SELECT MIN(id) FROM users)
+     AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')`,
 ];
 
 export async function migrate() {

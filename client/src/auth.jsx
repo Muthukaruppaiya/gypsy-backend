@@ -19,9 +19,26 @@ export function AuthProvider({ children }) {
       .finally(() => setReady(true));
   }, []);
 
+  useEffect(() => {
+    function refresh() {
+      if (!localStorage.getItem('token')) return;
+      api('/api/auth/me').then(setUser).catch(() => {});
+    }
+    function onVisible() {
+      if (document.visibilityState === 'visible') refresh();
+    }
+    window.addEventListener('gypsy-auth-refresh', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('gypsy-auth-refresh', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
   const value = useMemo(() => ({
     user,
     ready,
+    isAdmin: user?.role === 'admin',
     async login(email, password) {
       const data = await api('/api/auth/login', { method: 'POST', body: { email, password } });
       localStorage.setItem('token', data.token);
